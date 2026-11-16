@@ -2,7 +2,7 @@
 
 ## Check the source
 
-Run `bash scripts/test_source.sh` from the repository root. It runs the source-only suite (65 tests at this revision) using synthetic data and needs Python 3.11 or newer. If a newer Python is not the default, set `PYTHON` to its executable.
+Run `bash scripts/test_source.sh` from the repository root. It runs the source-only tests using synthetic data and needs Python 3.11 or newer. If a newer Python is not the default, set `PYTHON` to its executable.
 
 ## Run on RXE
 

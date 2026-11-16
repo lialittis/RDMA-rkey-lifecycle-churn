@@ -5,8 +5,7 @@ the existing two-VM soft-RoCE lab (owner 192.168.122.112, requester
 192.168.122.111, active rxe0, dedicated /tmp/rxe-churn-repro-validation
 directory). The main run is the primary result; the shakedown is an
 optional diagnostic auxiliary (internal role "smoke") that is never merged
-into the main run's denominators and never carries the earlier frozen
-revision's diagnostic-run name. Aggregate across all attempts: 604096
+into the main run's denominators. Aggregate across all attempts: 604096
 successful owner target registrations (the authorized ceiling) and 40.2 s
 from the first registration through final cleanup, within the 900 s
 budget. In the main run, 75713 MR pool-index recurrences and 332 complete
@@ -31,9 +30,9 @@ finite budget only.
 
 Verification status: `python3 verify.py --strict run-manifest.json` and
 `python3 scripts/check_summary.py docs/reproduction-results.md
-results/analysis.json` both pass against the archived raw ledgers,
-analysis and manifest under `results/` (git-ignored; archived by the
-coordinator under the project's runs/); the checker validates the
-phase-specific outcomes column against the raw analysis. The frozen
-earlier revision and its archived verification stay untouched at the
-`original-run` git tag.
+results/analysis.json` both pass; the checker validates the
+phase-specific outcomes column against the raw analysis. The raw
+artifacts (ledgers, logs, diagnostics, analysis, manifest) are kept
+outside this source-only repository, and the table above was checked
+against them. The frozen earlier revision and its archived verification
+stay untouched at the `original-run` git tag.

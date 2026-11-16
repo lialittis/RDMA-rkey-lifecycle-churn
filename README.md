@@ -8,7 +8,7 @@ Code for a two-endpoint RXE experiment that records MR pool-index reuse, complet
 bash scripts/test_source.sh
 ```
 
-This runs the source-only suite (65 tests at this revision) without an RDMA device or experiment data. Python 3.11 or newer is required. The full test suite needs the experiment dataset; see [Reproducing the experiment](REPRODUCING.md).
+This runs the source-only tests without an RDMA device or experiment data. Python 3.11 or newer is required. The full test suite needs the experiment dataset; see [Reproducing the experiment](REPRODUCING.md).
 
 ## Configure a lab
 
