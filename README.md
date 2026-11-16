@@ -55,6 +55,48 @@ flowchart TD
     R --> S["Verify manifest and table against the saved data"]
 ```
 
+## Owner-requester interaction
+
+This sequence shows one sampled recurrence after an earlier descriptor batch has been acknowledged. The harness can sample up to four index-only and eight complete-rkey recurrences; ordinary generations and initial setup controls are omitted.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant O as Owner VM
+    participant R as Requester VM
+    Note over O,R: TCP carries control messages, RC carries 64-byte RDMA WRITE probes
+    O->>O: Register an earlier target MR and record its rkey
+    O->>R: Descriptor batch containing the earlier rkey
+    R-->>O: Batch ACK
+    O->>O: Quiesce and deregister the earlier MR
+    O->>O: Continue churn, detect an index or full-rkey recurrence
+    O->>R: SAMPLE_BEGIN
+    R-->>O: SAMPLE_BEGIN ACK
+    O->>R: Request positive-control probe with current rkey
+    R->>O: RC RDMA WRITE to the live MR
+    R-->>O: Posting and completion status
+    alt Index-only recurrence
+        O->>R: Request probe using the saved descriptor
+        R->>O: RC RDMA WRITE with the saved rkey
+        R-->>O: Posting and completion status
+    else Complete-rkey recurrence
+        O->>R: Request live probe using the saved descriptor
+        R->>O: RC RDMA WRITE with the saved rkey
+        R-->>O: Posting and completion status
+    end
+    Note over O,R: Retire the probe QP before quiescence
+    O->>R: QUIESCE
+    R-->>O: QUIESCE ACK
+    O->>O: Deregister the current MR
+    opt Complete-rkey recurrence
+        Note over O,R: Use another QP for the post-deregistration probe
+        O->>R: Request post-deregistration probe with saved descriptor
+        R->>O: RC RDMA WRITE with the saved rkey
+        R-->>O: Posting and completion status
+    end
+    Note over O,R: Both sides log events, owner checks memory and guards
+```
+
 ## Files
 
 - `src/churn.c`: RDMA experiment program.
