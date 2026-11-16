@@ -48,7 +48,63 @@ def validate_launch(role, max_regs, deadline):
         raise ValueError("deadline must be within 1..%d seconds, got %d"
                          % (GLOBAL_MAX_SECONDS, deadline))
 
-DIAG_CMD = "dmesg | tail -120"
+DIAG_CMD = "dmesg; echo __DMESG_RC__=$?"
+DMESG_RC_MARKER = "__DMESG_RC__="
+
+
+def split_diag_capture(stdout, stderr):
+    """Split a diagnostics capture into dmesg's stdout, its REAL exit
+    status and its stderr.
+
+    The historical form ``dmesg | tail -120`` lost dmesg's exit status to
+    the pipe and discarded its stderr, so an unprivileged read failure
+    looked like an empty-but-successful capture; a capture without the
+    __DMESG_RC__ marker therefore yields returncode None and is never
+    treated as valid."""
+    def text(value):
+        return value.decode(errors="replace") if isinstance(value, bytes) \
+            else (value or "")
+    rc = None
+    lines = []
+    for line in text(stdout).splitlines():
+        if line.startswith(DMESG_RC_MARKER):
+            try:
+                rc = int(line[len(DMESG_RC_MARKER):].strip())
+            except ValueError:
+                rc = None
+        else:
+            lines.append(line)
+    return {"dmesg_stdout": "\n".join(lines),
+            "dmesg_returncode": rc,
+            "dmesg_stderr": text(stderr)}
+
+
+def capture_is_valid(cap):
+    return (cap["dmesg_returncode"] == 0
+            and not cap["dmesg_stderr"].strip())
+
+
+def diagnostics_delta(before_cap, after_cap):
+    """A kernel before/after delta may only be claimed when BOTH captures
+    are valid (dmesg exited 0 with empty stderr).  Otherwise the delta
+    status is 'unverified' and no clean/abnormal claim is made.
+
+    A sudo-based capture taken after the fact is a POST-HOC snapshot,
+    never a historical delta; it belongs in a separately labeled artifact
+    (see scripts/posthoc_diagnostics.py)."""
+    diag = {"delta_status": "unverified",
+            "new_lines_count": None, "new_abnormal_lines": []}
+    if not (capture_is_valid(before_cap) and capture_is_valid(after_cap)):
+        return diag
+    old = set(before_cap["dmesg_stdout"].splitlines())
+    new = [ln for ln in after_cap["dmesg_stdout"].splitlines()
+           if ln not in old]
+    bad = [ln for ln in new if ("WARNING" in ln or "BUG" in ln
+                                or "cleanup" in ln.lower())]
+    diag["new_lines_count"] = len(new)
+    diag["new_abnormal_lines"] = bad
+    diag["delta_status"] = "abnormal-lines" if bad else "clean"
+    return diag
 
 
 def utc():
@@ -119,6 +175,7 @@ def main():
                  "commands": [], "started_utc": utc()}
 
     # environments before
+    diag_before = {}
     for host, name in ((OWNER, "owner"), (CLIENT, "requester")):
         r = ssh_run(host, ENV_CMD)
         with open(os.path.join(out_dir, "%s-env-before.json" % name), "w") as f:
@@ -126,8 +183,10 @@ def main():
                        "returncode": r.returncode,
                        "output": r.stdout.decode(errors="replace")}, f, indent=2)
         d = ssh_run(host, DIAG_CMD)
+        cap = split_diag_capture(d.stdout, d.stderr)
+        diag_before[name] = cap
         with open(os.path.join(out_dir, "%s-dmesg-before.txt" % name), "w") as f:
-            f.write(d.stdout.decode(errors="replace"))
+            f.write(cap["dmesg_stdout"])
 
     owner_ledger = "%s/%s-owner.ledger" % (REMOTE, label)
     req_ledger = "%s/%s-requester.ledger" % (REMOTE, label)
@@ -184,7 +243,9 @@ def main():
     with open(os.path.join(out_dir, "requester.err"), "wb") as f:
         f.write(rq.stderr)
 
-    # environments + diagnostics after
+    # environments + diagnostics after: a delta claim requires BOTH
+    # captures valid (dmesg exit 0, empty stderr); otherwise the kernel
+    # delta is recorded as unverified, never as clean
     for host, name in ((OWNER, "owner"), (CLIENT, "requester")):
         r = ssh_run(host, ENV_CMD)
         with open(os.path.join(out_dir, "%s-env-after.json" % name), "w") as f:
@@ -192,20 +253,19 @@ def main():
                        "returncode": r.returncode,
                        "output": r.stdout.decode(errors="replace")}, f, indent=2)
         d = ssh_run(host, DIAG_CMD)
+        cap_after = split_diag_capture(d.stdout, d.stderr)
         with open(os.path.join(out_dir, "%s-dmesg-after.txt" % name), "w") as f:
-            f.write(d.stdout.decode(errors="replace"))
-        diag = {"available": d.returncode == 0, "command": DIAG_CMD,
-                "returncode": d.returncode,
-                "new_abnormal_lines": []}
-        before = os.path.join(out_dir, "%s-dmesg-before.txt" % name)
-        after = os.path.join(out_dir, "%s-dmesg-after.txt" % name)
-        if d.returncode == 0 and os.path.exists(before):
-            old = set(open(before).read().splitlines())
-            new = [ln for ln in open(after).read().splitlines() if ln not in old]
-            bad = [ln for ln in new if ("WARNING" in ln or "BUG" in ln
-                                        or "cleanup" in ln.lower())]
-            diag["new_lines_count"] = len(new)
-            diag["new_abnormal_lines"] = bad
+            f.write(cap_after["dmesg_stdout"])
+        cap_before = diag_before[name]
+        diag = {"available": capture_is_valid(cap_before)
+                and capture_is_valid(cap_after),
+                "command": DIAG_CMD,
+                "dmesg_returncode": cap_after["dmesg_returncode"],
+                "dmesg_returncode_before": cap_before["dmesg_returncode"],
+                "dmesg_stderr_excerpt": cap_after["dmesg_stderr"][:300],
+                "dmesg_stderr_excerpt_before":
+                    cap_before["dmesg_stderr"][:300]}
+        diag.update(diagnostics_delta(cap_before, cap_after))
         with open(os.path.join(out_dir, "%s-diagnostics.json" % name), "w") as f:
             json.dump(diag, f, indent=2)
 

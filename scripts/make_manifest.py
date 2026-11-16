@@ -74,6 +74,7 @@ def main():
     artifacts.append(art("harness-source", "scripts/deploy.py"))
     artifacts.append(art("harness-source", "scripts/run.py"))
     artifacts.append(art("harness-source", "scripts/collect_provenance.py"))
+    artifacts.append(art("harness-source", "scripts/reassess_diagnostics.py"))
     artifacts.append(art("harness-source", "scripts/posthoc_diagnostics.py"))
     artifacts.append(art("harness-source", "scripts/negative_checks.py"))
     artifacts.append(art("harness-source", "scripts/make_manifest.py"))

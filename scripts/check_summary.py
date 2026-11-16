@@ -14,6 +14,11 @@ document agrees with analysis.json:
 - per-row numeric agreement: Regs, Wall (s, within 0.05 s), Index reuse,
   Full-key recurrence, Sampled outcomes counts and Stop reason all match
   the analysis run for that role, and row labels match exactly;
+- the optional "Phase outcomes" column, when present, must recompute
+  exactly from the samples' per-probe phases and positive controls
+  (e.g. "io rejected=4; fk-live accepted=8; fk-post rejected=8; positive
+  accepted=12"), so an overall summary cannot conceal observed live
+  writes;
 - limits within the authorized caps (primary <= 600000, auxiliary <= 4096
   registrations, <= 900 s), 64-hex source/binary hash columns,
   Verification == PASS, non-empty Deviations/Limitations cells;
@@ -39,6 +44,20 @@ TABLE_COLUMNS = {"Run", "Role", "Kernel", "RXE", "Toolchain",
                  "Full-key recurrence", "Sampled outcomes", "Stop reason",
                  "Verification", "Deviations", "Limitations"}
 REQUIRED_COLUMNS = TABLE_COLUMNS
+# Optional column carrying the phase-specific probe outcomes ("4 rejected
+# index-only probes, 8 accepted live full-key probes, 8 rejected
+# post-deregistration probes, plus accepted positive controls") so the
+# sample-level overall summary cannot conceal observed live writes.
+PHASE_OUTCOMES_COLUMN = "Phase outcomes"
+ALLOWED_EXTRA_COLUMNS = {PHASE_OUTCOMES_COLUMN}
+PHASE_TOKENS = (("io", "index-only-probe"),
+                ("fk-live", "full-key-live"),
+                ("fk-post", "full-key-post-deregistration"),
+                ("positive", None))
+CLASS_ORDER = ("accepted", "rejected", "indeterminate", "anomalous")
+PHASE_TOKEN = re.compile(
+    r"^(io|fk-live|fk-post|positive) "
+    r"(accepted|rejected|indeterminate|anomalous)=\d+$")
 
 RUN_ROLES = ("smoke", "main")
 ROLE_MARKING = {"main": "primary", "smoke": "auxiliary"}
@@ -109,6 +128,64 @@ def parse_table(text):
     return header, rows
 
 
+def phase_outcome_tokens(run):
+    """Expected Phase outcomes tokens recomputed from the analysis run:
+    per (phase, classification) counts over the samples' probes plus the
+    samples' positive controls.  Returns a set of 'phase class=count'
+    strings (nonzero pairs only)."""
+    counts = {}
+    for sample in run.get("samples", []):
+        for probe in sample.get("probes", []):
+            phase = probe.get("phase")
+            classification = probe.get("classification")
+            for token, probe_phase in PHASE_TOKENS:
+                if probe_phase is not None and phase == probe_phase:
+                    key = (token, classification)
+                    counts[key] = counts.get(key, 0) + 1
+        positive = sample.get("positive_control", {}).get("classification")
+        if positive:
+            key = ("positive", positive)
+            counts[key] = counts.get(key, 0) + 1
+    return {"%s %s=%d" % (token, classification, count)
+            for (token, classification), count in counts.items()}
+
+
+def check_phase_cell(cell, run, label, v):
+    """Validate a 'Phase outcomes' cell against the analysis run."""
+    normalized = " ".join(cell.split())
+    if normalized == "none":
+        if run.get("samples"):
+            v.add("row %r Phase outcomes 'none' but the analysis run has "
+                  "%d samples" % (label, len(run.get("samples"))))
+        return
+    if not run.get("samples"):
+        v.add("row %r Phase outcomes %r but the analysis run has no "
+              "samples" % (label, normalized))
+        return
+    tokens = [token.strip() for token in normalized.split(";")
+              if token.strip()]
+    seen = set()
+    for token in tokens:
+        if not PHASE_TOKEN.fullmatch(token):
+            v.add("row %r Phase outcomes token %r is not "
+                  "'<io|fk-live|fk-post|positive> "
+                  "<accepted|rejected|indeterminate|anomalous>=N'"
+                  % (label, token))
+            return
+        if token in seen:
+            v.add("row %r Phase outcomes repeats token %r"
+                  % (label, token))
+        seen.add(token)
+    expected = phase_outcome_tokens(run)
+    if seen != expected:
+        v.add("row %r Phase outcomes %r != analysis phase counts %r "
+              "(the overall Sampled outcomes cell summarizes samples; the "
+              "phase cell must show the per-probe truth, e.g. accepted "
+              "live full-key writes)"
+              % (label, normalized,
+                 "; ".join(sorted(expected)) or "none"))
+
+
 def outcome_counts(run):
     counts = {name: 0 for name in OUTCOME_TOKENS}
     for sample in run.get("samples", []):
@@ -131,9 +208,16 @@ def check(table_path, analysis_path):
         v.add(str(exc))
         return v, 0
 
-    if set(header) != REQUIRED_COLUMNS or len(header) != len(REQUIRED_COLUMNS):
-        v.add("table header must contain exactly the columns %r, got %r"
-              % (sorted(REQUIRED_COLUMNS), header))
+    if len(set(header)) != len(header):
+        v.add("table header has duplicate columns: %r" % (header,))
+        return v, 0
+    missing = REQUIRED_COLUMNS - set(header)
+    extras = set(header) - REQUIRED_COLUMNS
+    if missing or not extras <= ALLOWED_EXTRA_COLUMNS:
+        v.add("table header must contain exactly the columns %r (plus "
+              "optionally %r), got %r (missing %r, unexpected %r)"
+              % (sorted(REQUIRED_COLUMNS), sorted(ALLOWED_EXTRA_COLUMNS),
+                 header, sorted(missing), sorted(extras)))
         return v, 0
     col = {name: index for index, name in enumerate(header)}
 
@@ -276,6 +360,9 @@ def check(table_path, analysis_path):
         if row[col["Verification"]] != "PASS":
             v.add("row %r Verification must be PASS, got %r"
                   % (label, row[col["Verification"]]))
+        if PHASE_OUTCOMES_COLUMN in col:
+            check_phase_cell(row[col[PHASE_OUTCOMES_COLUMN]], run,
+                             label, v)
 
     aggregate = analysis.get("aggregate")
     if not isinstance(aggregate, dict):

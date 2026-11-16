@@ -18,4 +18,6 @@ PYTHONPATH=tests:. "$PYTHON_BIN" -m unittest -v \
   test_repro_contract.OriginalRunPreservationTests \
   test_repro_contract.LauncherRoleContractTests \
   test_repro_contract.MakeManifestContractTests \
-  test_check_summary.CheckSummarySyntheticTests
+  test_check_summary.CheckSummarySyntheticTests \
+  test_check_summary_phases.PhaseOutcomesColumnTests \
+  test_diagnostics_capture.DiagnosticsCaptureTests
