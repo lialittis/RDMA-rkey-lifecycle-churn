@@ -20,4 +20,5 @@ PYTHONPATH=tests:. "$PYTHON_BIN" -m unittest -v \
   test_repro_contract.MakeManifestContractTests \
   test_check_summary.CheckSummarySyntheticTests \
   test_check_summary_phases.PhaseOutcomesColumnTests \
-  test_diagnostics_capture.DiagnosticsCaptureTests
+  test_diagnostics_capture.DiagnosticsCaptureTests \
+  test_manifest_dmesg_captures.ManifestDmesgCaptureTests

@@ -149,6 +149,16 @@ def main():
                              run=role))
         artifacts.append(art("raw-logs", rel("requester-env-after.json"),
                              run=role))
+        # every preserved raw kernel-ring capture is indexed with its exact
+        # path, size and SHA-256 so strict verification covers it (the
+        # 2026-11 cross-review finding: the eight empty historical
+        # captures were preserved but unindexed).  Synthetic trees without
+        # capture files simply omit them.
+        for side in ("owner", "requester"):
+            for phase in ("before", "after"):
+                name = "%s-dmesg-%s.txt" % (side, phase)
+                if os.path.isfile(os.path.join(run_dir, name)):
+                    artifacts.append(art("diagnostics", rel(name), run=role))
         if stop["stop_reason"] in ("control-failure", "cleanup-warning",
                                    "memory-mismatch", "probe-timeout"):
             artifacts.append(art("failure-explanation",
