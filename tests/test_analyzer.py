@@ -193,7 +193,7 @@ class ArchivedAnalysisTests(unittest.TestCase):
                 self.assertIn(field, run,
                               "analysis run %r missing %r"
                               % (run.get("label"), field))
-            self.assertIn(run["run_role"], ("shakedown", "main"),
+            self.assertIn(run["run_role"], ("smoke", "main"),
                           "the frozen revision's pilot role must not "
                           "appear in a churn-analysis/2 run object")
             self.assertIsInstance(run["target_registrations_succeeded"], int)
@@ -226,7 +226,7 @@ class ArchivedAnalysisTests(unittest.TestCase):
                     for run in self.analysis["runs"])
         self.assertEqual(
             aggregate.get("target_registrations_succeeded_total"), total,
-            "aggregate total must be the sum over runs (the shakedown is "
+            "aggregate total must be the sum over runs (the smoke run is "
             "never merged into the main run object, only summed here)")
         self.assertLessEqual(
             aggregate.get("target_registrations_succeeded_total", 1 << 60),
@@ -458,23 +458,23 @@ class SyntheticAnalyzerBehaviorTests(unittest.TestCase):
                 sorted(p["classification"]
                        for p in expected_sample["probes"]))
 
-    def test_shakedown_never_merged_into_main_denominators(self):
+    def test_smoke_never_merged_into_main_denominators(self):
         import analyzer
-        shakedown = support.build_synthetic_run(
-            self.tmp, run_role="shakedown", label="sep-shakedown",
+        smoke = support.build_synthetic_run(
+            self.tmp, run_role="smoke", label="shakedown-sep",
             stop_reason="count-budget", mono_base=1000)
         main = support.build_synthetic_run(
             self.tmp, run_role="main", label="sep-main",
             stop_reason="count-budget", mono_base=10 ** 10)
-        combined = analyzer.analyze([shakedown[0], shakedown[1],
+        combined = analyzer.analyze([smoke[0], smoke[1],
                                      main[0], main[1]])
         main_only = analyzer.analyze([main[0], main[1]])
         self.assertEqual([r["run_role"] for r in combined["runs"]],
-                         ["shakedown", "main"])
+                         ["smoke", "main"])
         combined_main = [r for r in combined["runs"]
                          if r["run_role"] == "main"][0]
         # every denominator of the primary run is unaffected by the
-        # auxiliary shakedown run that ran earlier
+        # auxiliary smoke (shakedown) run that ran earlier
         for field in ("target_registrations_attempted",
                       "target_registrations_succeeded",
                       "index_recurrences_observed",
@@ -483,20 +483,20 @@ class SyntheticAnalyzerBehaviorTests(unittest.TestCase):
                       "full_key_recurrence_events", "samples"):
             self.assertEqual(combined_main[field],
                              main_only["runs"][0][field],
-                             "shakedown leaked into the main run's %r"
+                             "the smoke run leaked into the main run's %r"
                              % field)
         # headline stays the main run object
         self.assertEqual(combined["headline"], combined_main)
 
     def test_aggregate_arithmetic_across_runs(self):
         import analyzer
-        shakedown = support.build_synthetic_run(
-            self.tmp, run_role="shakedown", label="agg-shakedown",
+        smoke = support.build_synthetic_run(
+            self.tmp, run_role="smoke", label="shakedown-agg",
             stop_reason="count-budget", mono_base=1000)
         main = support.build_synthetic_run(
             self.tmp, run_role="main", label="agg-main",
             stop_reason="count-budget", mono_base=10 ** 10)
-        analysis = analyzer.analyze([shakedown[0], shakedown[1],
+        analysis = analyzer.analyze([smoke[0], smoke[1],
                                      main[0], main[1]])
         aggregate = analysis["aggregate"]
         total = sum(r["target_registrations_succeeded"]
@@ -507,20 +507,42 @@ class SyntheticAnalyzerBehaviorTests(unittest.TestCase):
         self.assertIs(aggregate["within_registration_budget"], True)
         self.assertEqual(aggregate["aggregate_max_target_registrations"],
                          BUDGETS["aggregate_max_target_registrations"])
-        # owner monotonic span: from the shakedown's first registration to
-        # the main run's final cleanup record, across both attempts
+        # owner monotonic span: from the smoke run's first registration
+        # to the main run's final cleanup record, across both attempts
         import ledger
-        shakedown_first = min(
+        smoke_first = min(
             r["mono_ns"] for r in
-            ledger.read_ledger(shakedown[0]).records
+            ledger.read_ledger(smoke[0]).records
             if r.get("kind") == "registration" and r.get("target"))
         main_last = max(
             r["mono_ns"] for r in ledger.read_ledger(main[0]).records
             if isinstance(r.get("mono_ns"), int))
-        expected_span = (main_last - shakedown_first) / 1e9
+        expected_span = (main_last - smoke_first) / 1e9
         self.assertAlmostEqual(
             aggregate["wall_seconds_first_registration_to_final_cleanup"],
             round(expected_span, 6), places=4)
+        self.assertIs(aggregate["within_wall_budget"], True)
+
+    def test_aggregate_for_main_only_analysis(self):
+        # The diagnostic smoke run is optional: a main-only analysis must
+        # still carry a consistent aggregate block that mirrors the single
+        # run.
+        import analyzer
+        main = support.build_synthetic_run(
+            self.tmp, run_role="main", label="only-main",
+            stop_reason="count-budget", mono_base=1000)
+        analysis = analyzer.analyze([main[0], main[1]])
+        self.assertEqual([r["run_role"] for r in analysis["runs"]],
+                         ["main"])
+        aggregate = analysis["aggregate"]
+        run = analysis["runs"][0]
+        self.assertEqual(aggregate["target_registrations_succeeded_total"],
+                         run["target_registrations_succeeded"])
+        self.assertIs(aggregate["within_registration_budget"], True)
+        self.assertAlmostEqual(
+            aggregate["wall_seconds_first_registration_to_final_cleanup"],
+            run["wall_seconds_first_registration_to_final_cleanup"],
+            places=4)
         self.assertIs(aggregate["within_wall_budget"], True)
 
     def test_rejects_pilot_run_role_ledger(self):

@@ -135,8 +135,8 @@ class ManifestArtifactTests(unittest.TestCase):
                          "exactly one main (primary) run required, got %r"
                          % (roles,))
         self.assertLessEqual(roles.count(AUXILIARY_ROLE), 1,
-                             "at most one shakedown (auxiliary) run, "
-                             "got %r" % (roles,))
+                             "at most one smoke (auxiliary, user-facing "
+                             "shakedown) run, got %r" % (roles,))
         self.assertNotIn("pilot", roles,
                          "the pilot role belongs to the frozen "
                          "original-run revision only")

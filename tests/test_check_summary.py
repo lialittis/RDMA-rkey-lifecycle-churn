@@ -18,18 +18,22 @@ class CheckSummarySyntheticTests(unittest.TestCase):
     def setUpClass(cls):
         import analyzer
         cls.tmp = tempfile.mkdtemp(prefix="churn-summary-synth-")
-        shakedown = support.build_synthetic_run(
-            cls.tmp, run_role="shakedown", label="synthetic-shakedown",
+        smoke = support.build_synthetic_run(
+            cls.tmp, run_role="smoke", label="shakedown-synthetic",
             stop_reason="count-budget", mono_base=1000)
         main = support.build_synthetic_run(
             cls.tmp, run_role="main", label="synthetic-main",
             stop_reason="count-budget", mono_base=10 ** 10)
-        cls.analysis = analyzer.analyze(list(shakedown) + list(main))
+        cls.analysis = analyzer.analyze([smoke[0], smoke[1],
+                                         main[0], main[1]])
         cls.analysis_path = os.path.join(cls.tmp, "analysis.json")
         with open(cls.analysis_path, "w", encoding="utf-8") as f:
             json.dump(cls.analysis, f, indent=2, sort_keys=True)
             f.write("\n")
+        cls.analysis_main_only = analyzer.analyze([main[0], main[1]])
         cls.table = support.render_results_table(cls.analysis)
+        cls.table_main_only = support.render_results_table(
+            cls.analysis_main_only)
 
     @classmethod
     def tearDownClass(cls):
@@ -63,6 +67,22 @@ class CheckSummarySyntheticTests(unittest.TestCase):
             result.returncode, 0,
             "check_summary rejected a table that matches the analysis:\n%s"
             % result.stderr.decode(errors="replace"))
+
+    def test_accepts_main_only_table(self):
+        # The diagnostic run is optional: a table over a main-only
+        # analysis (no auxiliary row) must be accepted as-is.
+        analysis_path = os.path.join(self.tmp, "analysis-main-only.json")
+        with open(analysis_path, "w", encoding="utf-8") as f:
+            json.dump(self.analysis_main_only, f, indent=2, sort_keys=True)
+            f.write("\n")
+        md_path = os.path.join(self.tmp, "reproduction-results.md")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write("# Reproduction results\n\n" + self.table_main_only)
+        result = support.run_check_summary(md_path, analysis_path)
+        self.assertEqual(
+            result.returncode, 0,
+            "a main-only table must be accepted (the diagnostic run is "
+            "optional):\n%s" % result.stderr.decode(errors="replace"))
 
     def _assert_rejected(self, table_text, analysis=None):
         if analysis is None:
@@ -116,6 +136,14 @@ class CheckSummarySyntheticTests(unittest.TestCase):
         self._assert_rejected(
             self.table.replace("| auxiliary |", "| pilot |"))
 
+    def test_rejects_auxiliary_row_not_labeled_shakedown(self):
+        # User-facing naming: the diagnostic smoke run's row label must
+        # begin with "shakedown" (the internal role name must not leak
+        # into the user-facing table).
+        self._assert_rejected(
+            self.table.replace("| shakedown-synthetic |",
+                               "| smoke-synthetic |"))
+
     def test_rejects_missing_required_column(self):
         lines = []
         for line in self.table.splitlines():
@@ -163,7 +191,7 @@ class CheckSummarySyntheticTests(unittest.TestCase):
 
     def test_rejects_empty_limitations_cell(self):
         row = [line for line in self.table.splitlines()
-               if line.startswith("| synthetic-shakedown ")][0]
+               if line.startswith("| shakedown-synthetic ")][0]
         cells = row.split("|")
         self.assertTrue(cells[-2].strip(),
                         "fixture premise: limitations cell non-empty")

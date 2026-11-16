@@ -115,7 +115,7 @@ class VerifySyntheticManifestTests(unittest.TestCase):
             manifest["artifacts"] = [
                 a for a in manifest["artifacts"]
                 if not (a["role"] == "owner-ledger"
-                        and a.get("run") == "shakedown")]
+                        and a.get("run") == "smoke")]
         path = self._mutate_manifest("missing-run-role", mutate)
         self.assertNotEqual(support.run_verify(path).returncode, 0)
 
@@ -140,23 +140,24 @@ class VerifySyntheticManifestTests(unittest.TestCase):
     def test_rejects_early_stop_without_explanation(self):
         def mutate(manifest, root):
             for run in manifest["runs"]:
-                if run["role"] == "shakedown":
+                if run["role"] == "smoke":
                     run["stop_reason"] = "control-failure"
         path = self._mutate_manifest("no-explanation", mutate)
-        # The shakedown now stopped early with no failure-explanation
-        # artifact, and its stop-record still names the old stop reason:
-        # both reject.
+        # The smoke (shakedown) run now stopped early with no
+        # failure-explanation artifact, and its stop-record still names
+        # the old stop reason: both reject.
         self.assertNotEqual(support.run_verify(path).returncode, 0)
 
     def test_rejects_pilot_role_run(self):
         # The pilot role belongs to the frozen original-run revision; a
-        # churn-manifest/2 manifest must not carry it.
+        # churn-manifest/2 manifest must not carry it.  The smoke run
+        # entry and its artifacts are re-labelled pilot wholesale.
         def mutate(manifest, root):
             for run in manifest["runs"]:
-                if run["role"] == "shakedown":
+                if run["role"] == "smoke":
                     run["role"] = "pilot"
             for art in manifest["artifacts"]:
-                if art.get("run") == "shakedown":
+                if art.get("run") == "smoke":
                     art["run"] = "pilot"
         path = self._mutate_manifest("pilot-role", mutate)
         self.assertNotEqual(support.run_verify(path).returncode, 0)
@@ -171,19 +172,19 @@ class VerifySyntheticManifestTests(unittest.TestCase):
     def test_rejects_duplicate_main_runs(self):
         def mutate(manifest, root):
             for run in manifest["runs"]:
-                if run["role"] == "shakedown":
+                if run["role"] == "smoke":
                     run["role"] = "main"
             for art in manifest["artifacts"]:
-                if art.get("run") == "shakedown":
+                if art.get("run") == "smoke":
                     art["run"] = "main"
         path = self._mutate_manifest("two-mains", mutate)
         self.assertNotEqual(support.run_verify(path).returncode, 0)
 
-    def test_rejects_shakedown_over_role_cap(self):
+    def test_rejects_smoke_run_over_role_cap(self):
         def mutate(manifest, root):
             for art in manifest["artifacts"]:
                 if art.get("role") == "run-config" and \
-                        art.get("run") == "shakedown":
+                        art.get("run") == "smoke":
                     fs_path = os.path.join(root, art["path"])
                     with open(fs_path, "r", encoding="utf-8") as f:
                         cfg = json.load(f)
@@ -194,8 +195,23 @@ class VerifySyntheticManifestTests(unittest.TestCase):
                     # cap check can reject this manifest
                     art["bytes"] = os.path.getsize(fs_path)
                     art["sha256"] = support.sha256_file(fs_path)
-        path = self._mutate_manifest("shakedown-over-cap", mutate)
+        path = self._mutate_manifest("smoke-over-cap", mutate)
         self.assertNotEqual(support.run_verify(path).returncode, 0)
+
+    def test_accepts_main_only_manifest(self):
+        # A diagnostic smoke run is optional: removing it (entry plus all
+        # smoke-scoped artifacts) must leave a fully valid manifest.
+        def mutate(manifest, root):
+            manifest["runs"] = [r for r in manifest["runs"]
+                                if r["role"] == "main"]
+            manifest["artifacts"] = [a for a in manifest["artifacts"]
+                                     if a.get("run") in (None, "main")]
+        path = self._mutate_manifest("main-only", mutate)
+        result = support.run_verify(path, strict=True)
+        self.assertEqual(
+            result.returncode, 0,
+            "a main-only manifest must verify (the diagnostic run is "
+            "optional):\n%s" % result.stderr.decode(errors="replace"))
 
     def test_rejects_missing_results_table_role(self):
         def mutate(manifest, root):

@@ -10,11 +10,24 @@ Contract summary (churn-acceptance/2)
 
 This is the contract for the 2026-11 reproduction-validation revision.  It
 supersedes churn-acceptance/1: the reproduction run plan replaces the
-researcher-defined pilot with a diagnostic shakedown, the primary result is
-the single main run, and the registration budgets shrink to the newly
-authorized ceilings.  The pilot-based churn-acceptance/1 contract, its
-verifier and its archived verification stay frozen at the ``original-run``
-git tag and are never edited here (see "Original-run preservation" below).
+researcher-defined pilot with a short diagnostic auxiliary run, the primary
+result is the single main run, and the registration budgets shrink to the
+newly authorized ceilings.  The pilot-based churn-acceptance/1 contract,
+its verifier and its archived verification stay frozen at the
+``original-run`` git tag and are never edited here (see "Original-run
+preservation" below).
+
+Role naming (researcher decision, 2026-11-16): the INTERNAL diagnostic run
+role is ``smoke`` -- five bytes, so it fits the version-1 binary ledger's
+8-byte run_role field without any ledger schema migration, which must NOT
+happen.  ``smoke`` is the role string everywhere machine-readable: C
+harness run-meta, ledger records, manifest ``runs[].role`` and artifact
+``run`` scoping, analyzer output, launcher flags.  ``shakedown`` is the
+USER-FACING name only: docs/reproduction-results.md and other prose call
+the auxiliary run the shakedown, and its run LABEL begins with
+"shakedown".  A diagnostic run is never required: main-only manifests,
+analyses and tables are valid; the auxiliary run is omitted when preflight
+or safety checks prevent it.
 
 Repository layout (all paths relative to the repository root):
 
@@ -61,7 +74,7 @@ Manifest schema (``schema`` == "churn-manifest/1"):
 - ``budgets``: ``max_wall_seconds`` 900 (aggregate, from the first
   successful-owner-target registration of the first attempt through final
   cleanup of the last attempt), ``main_max_target_registrations`` 600000,
-  ``shakedown_max_target_registrations`` 4096,
+  ``smoke_max_target_registrations`` 4096,
   ``aggregate_max_target_registrations`` 604096 (hard ceiling across ALL
   attempts of the new run plan, retries and registering preflight
   included).
@@ -70,17 +83,17 @@ Manifest schema (``schema`` == "churn-manifest/1"):
 - ``sample_plan``: ``index_only`` 4, ``full_key`` 8,
   ``positive_stopping_rule`` false.
 - ``runs``: exactly one ``{"role": "main", ...}`` entry (the primary
-  result) and at most one ``{"role": "shakedown", ...}`` entry (a purely
-  diagnostic auxiliary run that is NEVER combined with the main run's
-  denominators and is never called a pilot).  The role ``pilot`` is not
-  valid in this revision.  Each entry has non-empty ``label`` and
-  ``stop_reason`` from STOP_REASONS.  A run whose stop_reason is in
+  result) and AT MOST one ``{"role": "smoke", ...}`` entry (the optional
+  internal diagnostic auxiliary; user-facing name "shakedown").  A
+  main-only manifest is valid.  The role ``pilot`` is not valid in this
+  revision.  Each entry has non-empty ``label`` and ``stop_reason`` from
+  STOP_REASONS.  A run whose stop_reason is in
   STOP_REASONS_REQUIRING_EXPLANATION must have a per-run
   ``failure-explanation`` artifact.  If no main run exists, a global
   ``main-attempt-explanation`` artifact must.  Per-run ``run-config``
-  artifacts obey the role caps: a shakedown run declares at most 4096
-  target registrations, a main run at most 600000, and every run at most
-  900 wall seconds.
+  artifacts obey the role caps: a smoke run declares at most 4096 target
+  registrations, a main run at most 600000, and every run at most 900
+  wall seconds.
 - ``artifacts``: list of ``{"role", "path", "sha256", "bytes"}`` plus
   optional ``"run"`` ("pilot"/"main") for run-scoped artifacts.  Paths are
   relative, no ``..``, unique, sha256 is 64 lowercase hex, bytes matches the
@@ -92,7 +105,7 @@ Required artifact roles:
   binary (>=1), environment-owner, environment-requester, remote-commands,
   ledger-schema, report, analysis, negative-checks, results-table (the
   committed ``docs/reproduction-results.md``).
-- per run (main and, when present, shakedown): owner-ledger,
+- per run (main and, when present, smoke): owner-ledger,
   requester-ledger, raw-logs (>=1), diagnostics (>=1), run-config,
   stop-record.
 
@@ -135,20 +148,20 @@ Analyzer output (``analysis.json``, schema "churn-analysis/2"): a
 ``runs`` list (one object per run discovered from ledger run-meta records,
 input order) and ``headline`` (a copy of the main run object, or null plus
 ``headline_absent_reason``).  Ledger run-meta records with a run role other
-than shakedown/main (e.g. the frozen revision's "pilot") are rejected with
+than smoke/main (e.g. the frozen revision's "pilot") are rejected with
 LedgerIntegrityError instead of being silently re-labelled.  Each run
-object carries: run_role (shakedown|main), label, stop_reason,
+object carries: run_role (smoke|main), label, stop_reason,
 target_registrations_attempted, target_registrations_succeeded (within the
-role cap: shakedown <= 4096, main <= 600000),
+role cap: smoke <= 4096, main <= 600000),
 wall_seconds_first_registration_to_final_cleanup (<= 900),
 quiesce_before_every_deregistration (true),
 allocation_invariants_preserved (true),
 allocation_outlived_all_qps (bool or null),
 index_recurrences_observed / full_key_recurrences_observed (separate
 counters against ALL earlier target generations of the SAME run; full-key
-events are a subset of index events; a shakedown run's generations are
-never merged into the main run's denominators), ``index_recurrence_events``
-/ ``full_key_recurrence_events`` lists where each event records generation,
+events are a subset of index events; a smoke run's generations are never
+merged into the main run's denominators), ``index_recurrence_events`` /
+``full_key_recurrence_events`` lists where each event records generation,
 matching value (index or rkey), first_earlier_generation,
 last_earlier_generation, matching_earlier_generations (count) and the exact
 denominator (number of earlier target generations), ``samples`` (capped at
@@ -159,7 +172,8 @@ rkey, index, low_byte}, descriptor_received_before_matching_generation
 "accepted", probes with the separated raw fields plus per-probe
 classification, and an overall classification), and ``probe_classifications``
 (probe_id -> classification for every probe in the inputs).  The top level
-additionally carries an ``aggregate`` object:
+additionally carries an ``aggregate`` object (also for a main-only
+analysis, where it simply mirrors the single run):
 target_registrations_succeeded_total (sum over runs, <=
 aggregate_max_target_registrations 604096), aggregate_max_target_
 registrations, within_registration_budget (bool),
@@ -193,9 +207,10 @@ table against the archived analysis:
   Reg limit | Regs | Time limit (s) | Wall (s) | Index reuse |
   Full-key recurrence | Sampled outcomes | Stop reason | Verification |
   Deviations | Limitations.
-- Exactly one row has Role == "primary" (the main run); every other row
-  has Role == "auxiliary" (a shakedown run).  Row Run labels match the
-  analysis run labels for those roles.
+- Exactly one row has Role == "primary" (the main run); there may be ZERO
+  or one auxiliary row (the smoke run).  Row Run labels match the analysis
+  run labels for those roles; an auxiliary row's Run label begins with
+  "shakedown" (the user-facing name of the diagnostic smoke role).
 - Numeric agreement with analysis.json per row: Regs ==
   target_registrations_succeeded; Wall (s) ==
   wall_seconds_first_registration_to_final_cleanup within 0.05 s; Index
@@ -226,6 +241,11 @@ contains the "exactly one pilot run is required" check and the 1048576
 budget pin.  The working-tree verify.py must NOT require a pilot run (the
 new revision accepts a main-only primary result).  Archived original-run
 data is re-verified only at that tag, never re-generated here.
+
+The version-1 binary ledger format is PRESERVED unchanged: MAGIC
+"RKEYCHN1", VERSION 1, and the 8-byte run_role field stay as they are --
+no ledger schema migration.  The internal diagnostic role is therefore at
+most 8 bytes long ("smoke"); user-facing prose says "shakedown" instead.
 """
 
 import hashlib
@@ -257,18 +277,27 @@ REQUIRED_ACCESS_FLAGS = {"LOCAL_WRITE", "REMOTE_WRITE"}
 
 BUDGETS = {"max_wall_seconds": 900,
            "main_max_target_registrations": 600000,
-           "shakedown_max_target_registrations": 4096,
+           "smoke_max_target_registrations": 4096,
            "aggregate_max_target_registrations": 604096}
 
-# Run roles of this revision: one primary main run plus an optional
-# diagnostic shakedown auxiliary.  "pilot" belongs to the frozen
-# original-run revision only.
-RUN_ROLES = ("shakedown", "main")
+# Run roles of this revision: one primary main run plus an OPTIONAL
+# diagnostic auxiliary.  The internal auxiliary role is "smoke" (5 bytes,
+# fits the preserved version-1 ledger's 8-byte run_role field); its
+# user-facing name in docs and the results table is "shakedown".  "pilot"
+# belongs to the frozen original-run revision only.
+RUN_ROLES = ("smoke", "main")
 PRIMARY_ROLE = "main"
-AUXILIARY_ROLE = "shakedown"
+AUXILIARY_ROLE = "smoke"
+AUXILIARY_USER_FACING = "shakedown"
 ROLE_REG_CAPS = {"main": BUDGETS["main_max_target_registrations"],
-                 "shakedown": BUDGETS["shakedown_max_target_registrations"]}
-ROLE_MARKING = {"main": "primary", "shakedown": "auxiliary"}
+                 "smoke": BUDGETS["smoke_max_target_registrations"]}
+ROLE_MARKING = {"main": "primary", "smoke": "auxiliary"}
+
+# The version-1 binary ledger format is frozen (see ledger.py): these
+# values must not change in this revision.
+LEDGER_V1_MAGIC = b"RKEYCHN1"
+LEDGER_V1_VERSION = 1
+LEDGER_RUN_ROLE_WIDTH = 8
 
 REQUIRED_PROHIBITIONS = {"device-reset", "index-range-restriction",
                          "key-injection", "failed-probe-retry",
@@ -481,10 +510,11 @@ def _control_event(seq, control_kind, mono, acked=True,
             "mono_ns": mono}
 
 
-def build_synthetic_run(root, run_role="shakedown", label="synthetic",
+def build_synthetic_run(root, run_role="smoke", label="synthetic",
                         stop_reason="count-budget", mono_base=1000):
-    """Write a complete synthetic shakedown/main run (owner + requester
-    ledgers).
+    """Write a complete synthetic smoke/main run (owner + requester
+    ledgers).  run_role must fit the preserved 8-byte ledger field
+    ("smoke", "main", or "pilot" for rejection fixtures).
 
     Key plan: gen3 reuses gen1's index with a novel key (an index-only
     recurrence), gen4 repeats gen2's full key.  gen1's descriptor is
@@ -655,7 +685,7 @@ def build_classification_fixture(root):
         return mono[0]
 
     owner_records = [
-        {"kind": "run-meta", "run_role": "shakedown",
+        {"kind": "run-meta", "run_role": "smoke",
          "label": "classification",
          "endpoint": "owner", "stop_reason": "explicit-stop",
          "allocation_outlived_all_qps": True, "mono_ns": m()},
@@ -673,7 +703,7 @@ def build_classification_fixture(root):
             w.append(rec)
         w.checkpoint()
     with ledger.LedgerWriter(requester_path) as w:
-        w.append({"kind": "run-meta", "run_role": "shakedown",
+        w.append({"kind": "run-meta", "run_role": "smoke",
                   "label": "classification", "endpoint": "requester",
                   "stop_reason": "explicit-stop", "mono_ns": m()})
         w.append(_control_event(1, "run-ready", m()))
@@ -693,7 +723,7 @@ def build_synthetic_manifest_tree(root):
     os.makedirs(os.path.join(root, "src"), exist_ok=True)
     os.makedirs(os.path.join(root, "docs"), exist_ok=True)
     os.makedirs(os.path.join(root, "results"), exist_ok=True)
-    os.makedirs(os.path.join(root, "results", "shakedown"), exist_ok=True)
+    os.makedirs(os.path.join(root, "results", "smoke"), exist_ok=True)
     os.makedirs(os.path.join(root, "results", "main"), exist_ok=True)
 
     artifacts = []
@@ -748,12 +778,14 @@ def build_synthetic_manifest_tree(root):
                    {"check": "verify-bad-hash-rejected", "passed": True}]}),
         "negative-checks")
 
-    # synthetic runs (shakedown + main) and their artifacts
+    # synthetic runs (smoke auxiliary + main primary)
     ledger_paths = []
-    for run_role in ("shakedown", "main"):
+    for run_role in ("smoke", "main"):
+        label = ("shakedown-synthetic" if run_role == "smoke"
+                 else "synthetic-main")
         owner, requester, _exp = build_synthetic_run(
-            root, run_role=run_role, label="synthetic-%s" % run_role,
-            mono_base=1000 if run_role == "shakedown" else 10 ** 10)
+            root, run_role=run_role, label=label,
+            mono_base=1000 if run_role == "smoke" else 10 ** 10)
         ledger_paths.extend([owner, requester])
         sub = "results/%s" % run_role
         for role, src in (("owner-ledger", owner), ("requester-ledger",
@@ -815,7 +847,7 @@ def build_synthetic_manifest_tree(root):
                         "positive_stopping_rule":
                             SAMPLE_PLAN["positive_stopping_rule"]},
         "runs": [
-            {"role": "shakedown", "label": "synthetic-shakedown",
+            {"role": "smoke", "label": "shakedown-synthetic",
              "stop_reason": "count-budget"},
             {"role": "main", "label": "synthetic-main",
              "stop_reason": "count-budget"},
@@ -862,13 +894,13 @@ DEFAULT_TABLE_META = {
         "deviations": "none in fixture",
         "limitations": "synthetic fixture, not an observation",
     },
-    "shakedown": {
+    "smoke": {
         "kernel": "6.8.0-147-generic (aarch64)",
         "rxe": "rdma_rxe on rxe0 (active)",
         "toolchain": "gcc 13.2.0, libibverbs-dev 42.0",
         "source_sha256": "a" * 64,
         "binary_sha256": "b" * 64,
-        "reg_limit": ROLE_REG_CAPS["shakedown"],
+        "reg_limit": ROLE_REG_CAPS["smoke"],
         "time_limit": 60,
         "verification": "PASS",
         "deviations": "none in fixture",
@@ -1029,14 +1061,15 @@ def build_results_tree(root):
 
     ledger_paths = []
     run_dirs = []
-    for role in ("shakedown", "main"):
+    for role in ("smoke", "main"):
         dirname = "%s-20260101T000000Z" % role
         run_dirs.append(dirname)
         run_dir = os.path.join(results, dirname)
         os.makedirs(run_dir)
+        label = "shakedown-synthetic" if role == "smoke" else "synthetic-main"
         owner, requester, _exp = build_synthetic_run(
-            run_dir, run_role=role, label="synthetic-%s" % role,
-            mono_base=1000 if role == "shakedown" else 10 ** 10)
+            run_dir, run_role=role, label=label,
+            mono_base=1000 if role == "smoke" else 10 ** 10)
         # build_synthetic_run writes <label>-owner.ledger; place the files
         # under the names make_manifest indexes
         for src, dst_name in ((owner, "owner.ledger"),
@@ -1057,7 +1090,8 @@ def build_results_tree(root):
                           % (dirname, side, phase),
                           {"host": "synthetic", "command": "env"})
         dump_json("results/%s/execution.json" % dirname, {
-            "role": role, "label": "synthetic-%s" % role})
+            "role": role, "label": "shakedown-synthetic"
+            if role == "smoke" else "synthetic-main"})
         dump_json("results/%s/run-config.json" % dirname, {
             "owner_endpoint": OWNER_ENDPOINT,
             "requester_endpoint": REQUESTER_ENDPOINT,
@@ -1073,7 +1107,7 @@ def build_results_tree(root):
     expectations = {
         "config_path": config_path,
         "run_dirs": run_dirs,
-        "roles": ["shakedown", "main"],
+        "roles": ["smoke", "main"],
         "budgets": dict(BUDGETS),
     }
     return config_path, expectations

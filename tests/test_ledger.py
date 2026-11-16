@@ -188,13 +188,13 @@ class ArchivedLedgerTests(unittest.TestCase):
                                  "target registrations vary %r: %r"
                                  % (field, values))
             self.assertEqual(target[0]["length"], ALLOCATION_BYTES)
-            # hard count cap (per-run role cap; shakedown runs are capped
+            # hard count cap (per-run role cap; smoke runs are capped
             # at 4096, main runs at 600000)
             succeeded = [r for r in target if r["register_rc"] == 0]
             self.assertLessEqual(
                 len(succeeded),
                 max(BUDGETS["main_max_target_registrations"],
-                    BUDGETS["shakedown_max_target_registrations"]),
+                    BUDGETS["smoke_max_target_registrations"]),
                 "successful target registrations exceed the hard cap")
 
     def test_deregistration_records_quiesced_and_matched(self):
