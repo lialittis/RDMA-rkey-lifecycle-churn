@@ -26,9 +26,34 @@ The primary result is a single `main` run (at most 600,000 successful owner targ
 
 The optional shakedown and the main run use the same registration cycle. Each run has separate owner and requester ledgers and its own limits; only the main run supplies the primary recurrence counts.
 
-![RXE rkey churn experiment flow](docs/experiment-flow.svg)
-
-[Diagram source (DOT)](docs/experiment-flow.dot)
+```mermaid
+flowchart TD
+    A["Configure two RXE endpoints"] --> B["Build and deploy the C harness"]
+    B --> C{"Run optional shakedown?"}
+    C -->|Yes| D["smoke: at most 4,096 registrations"]
+    C -->|No| E["main: at most 600,000 registrations"]
+    D --> F["Owner registers the fixed MR; record rkey and index"]
+    E --> F
+    F --> G["Maintain sequenced descriptors; requester ACKs before sampled use"]
+    G --> H{"Earlier target generation matches?"}
+    H -->|Index only; up to 4 samples| I["Positive control; probe saved descriptor"]
+    H -->|Full rkey; up to 8 samples| J["Positive control; live probe on a fresh QP"]
+    H -->|No eligible sample| K["Quiesce and deregister the MR"]
+    I --> K
+    J --> K
+    K --> L{"Full-rkey sample?"}
+    L -->|Yes| M["Post-deregistration probe on another QP"]
+    L -->|No| N["Write owner and requester ledgers"]
+    M --> N
+    N --> O{"Stop condition?"}
+    O -->|Continue within limits| F
+    O -->|Smoke complete; controls healthy| E
+    O -->|Main complete| P["Analyze index reuse, full-key recurrence, and probe outcomes"]
+    O -->|Failed control, cleanup, or probe| T["Stop and preserve diagnostic records"]
+    P --> Q["Write the compact results table"]
+    Q --> R["Hash artifacts into the run manifest"]
+    R --> S["Verify manifest and table against the saved data"]
+```
 
 ## Files
 
