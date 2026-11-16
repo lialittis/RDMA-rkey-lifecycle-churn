@@ -67,7 +67,7 @@ def main():
             import hashlib
             digest = hashlib.sha256(open(good, "rb").read()).hexdigest()
             manifest = {
-                "schema": "churn-manifest/1",
+                "schema": "churn-manifest/2",
                 "experiment": {
                     "owner_endpoint": "192.0.2.12",
                     "requester_endpoint": "192.0.2.11",
@@ -81,14 +81,15 @@ def main():
                            "allocation_alive_until_qps_destroyed": True,
                            "quiesce_before_deregistration": True},
                 "budgets": {"max_wall_seconds": 900,
-                            "max_target_registrations": 1048576,
-                            "calibration_prefix_registrations": 4096},
+                            "main_max_target_registrations": 600000,
+                            "smoke_max_target_registrations": 4096,
+                            "aggregate_max_target_registrations": 604096},
                 "prohibitions": ["device-reset", "index-range-restriction",
                                  "key-injection", "failed-probe-retry",
                                  "synthetic-recurrence-as-observation"],
                 "sample_plan": {"index_only": 4, "full_key": 8,
                                 "positive_stopping_rule": False},
-                "runs": [{"role": "pilot", "label": "synthetic",
+                "runs": [{"role": "main", "label": "synthetic",
                           "stop_reason": "count-budget"}],
                 "artifacts": [{"role": "harness-source", "path": "artifact.bin",
                                "sha256": ("0" * 63 + "1"),

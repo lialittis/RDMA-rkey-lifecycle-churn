@@ -13,4 +13,9 @@ PYTHONPATH=tests:. "$PYTHON_BIN" -m unittest -v \
   test_verify.VerifySyntheticManifestTests \
   test_verify.VerifyRealManifestTests.test_verify_help_exits_zero \
   test_verify.VerifyRealManifestTests.test_verify_missing_manifest_exits_nonzero \
-  test_analyzer.AnalyzerApiTests.test_module_importable_with_analyze
+  test_analyzer.AnalyzerApiTests.test_module_importable_with_analyze \
+  test_repro_contract.LedgerFormatPreservationTests \
+  test_repro_contract.OriginalRunPreservationTests \
+  test_repro_contract.LauncherRoleContractTests \
+  test_repro_contract.MakeManifestContractTests \
+  test_check_summary.CheckSummarySyntheticTests

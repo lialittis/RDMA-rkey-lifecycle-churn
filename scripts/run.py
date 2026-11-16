@@ -24,8 +24,29 @@ from lab_config import ConfigError, load_config  # noqa: E402
 REMOTE = OWNER = CLIENT = SSH_USER = None
 SSH = SCP = ENV_CMD = None
 PORT = 7471
-GLOBAL_MAX_REGS = 1048576
 GLOBAL_MAX_SECONDS = 900
+
+# Authorized per-role registration caps of the reproduction-validation run
+# plan.  The internal diagnostic role is "smoke" (fits the preserved
+# version-1 ledger's 8-byte run_role field); its USER-FACING label is
+# "shakedown".  "pilot" belongs to the frozen original-run revision.
+ROLE_MAX_REGS = {"smoke": 4096, "main": 600000}
+RUN_ROLES = ("smoke", "main")
+
+
+def validate_launch(role, max_regs, deadline):
+    """Reject any launch outside the authorized per-role caps (offline,
+    no network): role must be smoke/main, max_regs within the role cap,
+    deadline within the 900 s aggregate wall budget."""
+    if role not in ROLE_MAX_REGS:
+        raise ValueError("role must be one of %r, got %r"
+                         % (sorted(ROLE_MAX_REGS), role))
+    if not 1 <= max_regs <= ROLE_MAX_REGS[role]:
+        raise ValueError("max-regs for role %r must be within 1..%d, "
+                         "got %d" % (role, ROLE_MAX_REGS[role], max_regs))
+    if not 1 <= deadline <= GLOBAL_MAX_SECONDS:
+        raise ValueError("deadline must be within 1..%d seconds, got %d"
+                         % (GLOBAL_MAX_SECONDS, deadline))
 
 DIAG_CMD = "dmesg | tail -120"
 
@@ -52,14 +73,23 @@ def main():
     global REMOTE, OWNER, CLIENT, SSH_USER, SSH, SCP, ENV_CMD
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", help="TOML lab config (default: config.local.toml)")
-    parser.add_argument("--role", required=True, choices=["pilot", "main", "shakedown"])
+    parser.add_argument("--role", required=True,
+                        choices=list(RUN_ROLES),
+                        help="smoke = short diagnostic auxiliary "
+                             "(user-facing name: shakedown); main = "
+                             "primary run")
     parser.add_argument("--max-regs", type=int, required=True)
     parser.add_argument("--deadline", type=int, required=True,
                         help="seconds from first owner registration")
     parser.add_argument("--label", default=None)
     parser.add_argument("--selftest", action="store_true",
-                        help="enable the gen-1 machinery selftest (pilot only)")
+                        help="enable the gen-1 machinery selftest "
+                             "(smoke role only)")
     args = parser.parse_args()
+    try:
+        validate_launch(args.role, args.max_regs, args.deadline)
+    except ValueError as exc:
+        parser.error(str(exc))
     try:
         config = load_config(args.config)
     except ConfigError as exc:
@@ -74,16 +104,14 @@ def main():
                "cat /sys/module/rdma_rxe/version 2>/dev/null; "
                "ibv_devinfo -d rxe0 2>/dev/null | head -20")
 
-    if not (1 <= args.max_regs <= GLOBAL_MAX_REGS
-            and 1 <= args.deadline <= GLOBAL_MAX_SECONDS):
-        parser.error("max-regs and deadline must be positive and within the caps")
-
-    label = args.label or args.role
+    # user-facing label: the diagnostic run is called the shakedown
+    label = args.label or ("shakedown" if args.role == "smoke"
+                           else args.role)
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", label):
         parser.error("label must contain only letters, digits, dot, dash or underscore")
     out_dir = os.path.join(REPO, "results", "%s-%s" % (args.role, utc()))
     os.makedirs(out_dir, exist_ok=True)
-    port = PORT + (0 if args.role != "shakedown" else 1)
+    port = PORT + (1 if args.role == "smoke" else 0)
 
     execution = {"role": args.role, "label": label, "max_regs": args.max_regs,
                  "deadline_seconds": args.deadline, "port": port,
@@ -187,7 +215,6 @@ def main():
                   "remote_directory": REMOTE,
                   "max_wall_seconds": args.deadline,
                   "max_target_registrations": args.max_regs,
-                  "calibration_prefix_registrations": min(4096, args.max_regs),
                   "port": port, "selftest": bool(args.selftest),
                   "owner_command": owner_cmd, "requester_command": req_cmd}
     with open(os.path.join(out_dir, "run-config.json"), "w") as f:

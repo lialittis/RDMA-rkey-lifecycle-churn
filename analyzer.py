@@ -33,14 +33,19 @@ import tempfile
 
 import ledger
 
-ANALYSIS_SCHEMA = "churn-analysis/1"
+ANALYSIS_SCHEMA = "churn-analysis/2"
 
 WC_SUCCESS = 0
 WC_REM_ACCESS_ERR = 10
 
-CALIBRATION_PREFIX_REGISTRATIONS = 4096
+# churn-acceptance/2 budgets: one primary main run plus an optional
+# diagnostic "smoke" auxiliary (user-facing name: shakedown); "pilot"
+# belongs to the frozen original-run revision and is rejected.
+RUN_ROLES = ("smoke", "main")
 MAX_WALL_SECONDS = 900
-MAX_TARGET_REGISTRATIONS = 1048576
+MAIN_MAX_TARGET_REGISTRATIONS = 600000
+SMOKE_MAX_TARGET_REGISTRATIONS = 4096
+AGGREGATE_MAX_TARGET_REGISTRATIONS = 604096
 
 SAMPLE_PHASES = ("index-only-probe", "full-key-live",
                  "full-key-post-deregistration")
@@ -327,8 +332,6 @@ def analyze_run(run_key, owner_records, requester_records):
         "stop_reason": stop_reason,
         "target_registrations_attempted": len(regs_attempted),
         "target_registrations_succeeded": len(regs_succeeded),
-        "calibration_prefix_registrations": min(
-            CALIBRATION_PREFIX_REGISTRATIONS, len(regs_succeeded)),
         "wall_seconds_first_registration_to_final_cleanup":
             round(wall, 6),
         "quiesce_before_every_deregistration": quiesced,
@@ -344,7 +347,7 @@ def analyze_run(run_key, owner_records, requester_records):
 
 
 _CACHE_DIR = os.path.join(tempfile.gettempdir(), "churn-analyzer-cache-v2")
-ANALYZER_VERSION = 3
+ANALYZER_VERSION = 4
 
 
 def _cache_key(paths):
@@ -400,6 +403,11 @@ def _analyze_uncached(paths):
         if run_key is None:
             raise ledger.LedgerIntegrityError(
                 "%s: no run-meta record" % path)
+        if run_key[0] not in RUN_ROLES:
+            raise ledger.LedgerIntegrityError(
+                "%s: run role %r is not valid in churn-analysis/2 "
+                "(smoke/main only; the frozen revision's pilot data is "
+                "never re-labelled)" % (path, run_key[0]))
         if run_key not in runs:
             runs[run_key] = {"owner": [], "requester": []}
             order.append(run_key)
@@ -431,6 +439,45 @@ def _analyze_uncached(paths):
         "runs": result_runs,
         "headline": headline,
         "headline_absent_reason": absent,
+        "aggregate": _aggregate(result_runs, runs, order),
+    }
+
+
+def _aggregate(result_runs, runs_by_key, order):
+    """Aggregate accounting across every attempt in the input: the hard
+    ceiling is 604096 successful target registrations and 900 s from the
+    first registration of the first run through the final cleanup record
+    of the last run, measured on the owner ledgers' shared monotonic
+    clock (valid while the owner did not reboot between attempts)."""
+    total = sum(r["target_registrations_succeeded"] for r in result_runs)
+    first = None
+    last = None
+    for run_key in order:
+        owner_records = runs_by_key[run_key]["owner"]
+        for rec in owner_records:
+            if rec["kind"] == "registration" and rec["target"]:
+                mono = rec["mono_ns"]
+                if first is None or mono < first:
+                    first = mono
+            mono = rec.get("mono_ns")
+            if isinstance(mono, int):
+                if last is None or mono > last:
+                    last = mono
+    if first is not None and last is not None:
+        span = round((last - first) / 1e9, 6)
+        within_wall = span <= float(MAX_WALL_SECONDS)
+    else:
+        span = None
+        within_wall = None
+    return {
+        "target_registrations_succeeded_total": total,
+        "aggregate_max_target_registrations":
+            AGGREGATE_MAX_TARGET_REGISTRATIONS,
+        "within_registration_budget":
+            total <= AGGREGATE_MAX_TARGET_REGISTRATIONS,
+        "wall_seconds_first_registration_to_final_cleanup": span,
+        "max_wall_seconds": MAX_WALL_SECONDS,
+        "within_wall_budget": within_wall,
     }
 
 
@@ -476,14 +523,18 @@ def main(argv=None):
     summary = json.loads(blob.decode("utf-8"))
     main_run = summary["headline"]
     if main_run:
+        aggregate = summary.get("aggregate", {})
         sys.stdout.write(
             "analysis: runs=%d main registrations=%d "
-            "index_recurrences=%d full_key_recurrences=%d samples=%d\n"
+            "index_recurrences=%d full_key_recurrences=%d samples=%d "
+            "aggregate_total=%s within_budget=%s\n"
             % (len(summary["runs"]),
                main_run["target_registrations_succeeded"],
                main_run["index_recurrences_observed"],
                main_run["full_key_recurrences_observed"],
-               len(main_run["samples"])))
+               len(main_run["samples"]),
+               aggregate.get("target_registrations_succeeded_total"),
+               aggregate.get("within_registration_budget")))
     else:
         sys.stdout.write("analysis: runs=%d no main run\n"
                          % len(summary["runs"]))

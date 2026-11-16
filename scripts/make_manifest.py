@@ -17,6 +17,17 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 from lab_config import ConfigError, load_config  # noqa: E402
 
+# churn-manifest/2 run roles, in manifest order: the optional internal
+# diagnostic "smoke" auxiliary (user-facing name: shakedown) first, then
+# the single primary main run.
+RUN_ROLES = ("smoke", "main")
+
+# Authorized budgets of the 2026-11 reproduction-validation run plan.
+BUDGETS = {"max_wall_seconds": 900,
+           "main_max_target_registrations": 600000,
+           "smoke_max_target_registrations": 4096,
+           "aggregate_max_target_registrations": 604096}
+
 
 def sha256_file(path):
     h = hashlib.sha256()
@@ -62,12 +73,16 @@ def main():
     artifacts.append(art("harness-source", "lab_config.py"))
     artifacts.append(art("harness-source", "scripts/deploy.py"))
     artifacts.append(art("harness-source", "scripts/run.py"))
+    artifacts.append(art("harness-source", "scripts/collect_provenance.py"))
+    artifacts.append(art("harness-source", "scripts/posthoc_diagnostics.py"))
     artifacts.append(art("harness-source", "scripts/negative_checks.py"))
     artifacts.append(art("harness-source", "scripts/make_manifest.py"))
+    artifacts.append(art("harness-source", "scripts/check_summary.py"))
     artifacts.append(art("harness-source", "ledger.py"))
     artifacts.append(art("harness-source", "analyzer.py"))
     artifacts.append(art("harness-source", "verify.py"))
     artifacts.append(art("ledger-schema", "docs/ledger-schema.md"))
+    artifacts.append(art("results-table", "docs/reproduction-results.md"))
     artifacts.append(art("build-log", "results/build.json"))
     artifacts.append(art("binary", "results/churn.aarch64"))
     artifacts.append(art("environment-owner",
@@ -80,13 +95,20 @@ def main():
     artifacts.append(art("negative-checks", "results/negative-checks.json"))
 
     run_dirs = []
-    for role in ("pilot", "main"):
+    for role in RUN_ROLES:
         candidates = sorted(d for d in os.listdir(results)
                             if d.startswith(role + "-")
                             and os.path.isdir(os.path.join(results, d)))
         if candidates:
             run_dirs.append((role, candidates[-1]))
         elif role == "main":
+            explanation = os.path.join(results, "main-attempt-explanation.md")
+            if not os.path.isfile(explanation):
+                raise SystemExit(
+                    "no main run directory under results/ and no "
+                    "results/main-attempt-explanation.md: a main-only "
+                    "primary result (or a preserved explanation of why "
+                    "no main attempt was possible) is required")
             artifacts.append(art("main-attempt-explanation",
                                  "results/main-attempt-explanation.md"))
 
@@ -132,7 +154,7 @@ def main():
                                  rel("failure-explanation.md"), run=role))
 
     manifest = {
-        "schema": "churn-manifest/1",
+        "schema": "churn-manifest/2",
         "experiment": {
             "name": "bounded-rxe-registration-churn",
             "owner_endpoint": config.owner_ip,
@@ -148,9 +170,7 @@ def main():
             "allocation_alive_until_qps_destroyed": True,
             "quiesce_before_deregistration": True,
         },
-        "budgets": {"max_wall_seconds": 900,
-                    "max_target_registrations": 1048576,
-                    "calibration_prefix_registrations": 4096},
+        "budgets": dict(BUDGETS),
         "prohibitions": ["device-reset", "index-range-restriction",
                          "key-injection", "failed-probe-retry",
                          "synthetic-recurrence-as-observation"],

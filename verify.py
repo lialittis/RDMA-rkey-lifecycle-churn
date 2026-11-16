@@ -11,6 +11,14 @@ roles are present (global and per-run), and every run carries a valid stop
 reason with preserved failure explanations for early stops.  Any
 violation is reported on stderr and the exit code is nonzero.
 
+churn-manifest/2 (2026-11 reproduction-validation revision): exactly one
+"main" run is the primary result, an optional "smoke" run is the internal
+diagnostic auxiliary (user-facing name: shakedown; never a pilot), the
+results-table global role carries docs/reproduction-results.md, and
+per-role registration caps (main 600000, smoke 4096, aggregate 604096 /
+900 s wall) are enforced on run-config artifacts.  The pilot-based
+churn-manifest/1 verifier stays frozen at the original-run git tag.
+
 Manifest artifact paths are interpreted relative to the manifest file's
 own directory.  --strict is the canonical invocation; the full check set
 always runs.
@@ -25,15 +33,22 @@ from pathlib import Path
 import re
 import sys
 
-MANIFEST_SCHEMA = "churn-manifest/1"
+MANIFEST_SCHEMA = "churn-manifest/2"
 REMOTE_PATH = re.compile(r"/[A-Za-z0-9_./-]+\Z")
 ALLOCATION_BYTES = 4096
 PROBE_SPEC = {"opcode": "RDMA_WRITE", "transport": "RC",
               "length": 64, "offset": 64, "nonzero": True}
 REQUIRED_ACCESS_FLAGS = {"LOCAL_WRITE", "REMOTE_WRITE"}
 BUDGETS = {"max_wall_seconds": 900,
-           "max_target_registrations": 1048576,
-           "calibration_prefix_registrations": 4096}
+           "main_max_target_registrations": 600000,
+           "smoke_max_target_registrations": 4096,
+           "aggregate_max_target_registrations": 604096}
+# Internal run roles: one primary main run plus an OPTIONAL diagnostic
+# "smoke" auxiliary (user-facing name: shakedown).  "pilot" belongs to the
+# frozen original-run revision only.
+RUN_ROLES = ("smoke", "main")
+ROLE_REG_CAPS = {"main": BUDGETS["main_max_target_registrations"],
+                 "smoke": BUDGETS["smoke_max_target_registrations"]}
 REQUIRED_PROHIBITIONS = {"device-reset", "index-range-restriction",
                          "key-injection", "failed-probe-retry",
                          "synthetic-recurrence-as-observation"}
@@ -47,7 +62,7 @@ STOP_REASONS_REQUIRING_EXPLANATION = {"control-failure", "cleanup-warning",
 REQUIRED_GLOBAL_ROLES = {"harness-source", "build-log", "binary",
                          "environment-owner", "environment-requester",
                          "remote-commands", "ledger-schema", "report",
-                         "analysis", "negative-checks"}
+                         "analysis", "negative-checks", "results-table"}
 REQUIRED_RUN_ROLES = {"owner-ledger", "requester-ledger", "raw-logs",
                       "diagnostics", "run-config", "stop-record"}
 EXACT_ONE_RUN_ROLES = {"owner-ledger", "requester-ledger", "run-config",
@@ -201,17 +216,20 @@ def check_manifest(manifest, manifest_dir):
         v.add("'runs' must be a non-empty list")
         runs = []
     roles = [r.get("role") for r in runs if isinstance(r, dict)]
-    if roles.count("pilot") != 1:
-        v.add("exactly one pilot run is required, got %r" % (roles,))
-    if roles.count("main") > 1:
-        v.add("at most one main run is allowed")
+    if roles.count("main") != 1:
+        v.add("exactly one main (primary) run is required, got %r"
+              % (roles,))
+    if roles.count("smoke") > 1:
+        v.add("at most one smoke (auxiliary) run is allowed, got %r"
+              % (roles,))
     for run in runs:
         if not isinstance(run, dict):
             v.add("run entry is not an object: %r" % (run,))
             continue
         role = run.get("role")
-        if role not in ("pilot", "main"):
-            v.add("run role must be pilot/main, got %r" % (role,))
+        if role not in RUN_ROLES:
+            v.add("run role must be smoke/main (pilot belongs to the "
+                  "frozen original-run revision), got %r" % (role,))
             continue
         label = run.get("label")
         if not isinstance(label, str) or not label.strip():
@@ -264,11 +282,12 @@ def check_manifest(manifest, manifest_dir):
                         BUDGETS["max_wall_seconds"]:
                     v.add("run %r wall cap exceeds the global budget"
                           % role)
-                if run_config.get("max_target_registrations",
-                                  BUDGETS["max_target_registrations"]) > \
-                        BUDGETS["max_target_registrations"]:
-                    v.add("run %r registration cap exceeds the global "
-                          "budget" % role)
+                cap = ROLE_REG_CAPS.get(role)
+                if cap is not None and \
+                        run_config.get("max_target_registrations",
+                                       cap) > cap:
+                    v.add("run %r registration cap exceeds its role "
+                          "budget %d" % (role, cap))
 
     if "main" not in roles and not by_role.get(
             ("main-attempt-explanation", None)):

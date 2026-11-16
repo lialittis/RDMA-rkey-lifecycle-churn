@@ -18,6 +18,11 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 from lab_config import ConfigError, load_config  # noqa: E402
 
+# Run-directory prefixes this revision processes: the internal diagnostic
+# "smoke" auxiliary (user-facing name: shakedown) and the primary main
+# run.  The frozen revision's pilot- prefix is intentionally excluded.
+RUN_DIR_PREFIXES = ("smoke-", "main-")
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -29,7 +34,7 @@ def main():
         parser.error(str(exc))
     results = os.path.join(REPO, "results")
     run_dirs = [d for d in sorted(os.listdir(results))
-                if (d.startswith("pilot-") or d.startswith("main-"))
+                if d.startswith(RUN_DIR_PREFIXES)
                 and os.path.isdir(os.path.join(results, d))]
     for host, name in ((config.owner_ip, "owner"),
                        (config.requester_ip, "requester")):
