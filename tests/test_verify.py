@@ -114,7 +114,8 @@ class VerifySyntheticManifestTests(unittest.TestCase):
         def mutate(manifest, root):
             manifest["artifacts"] = [
                 a for a in manifest["artifacts"]
-                if not (a["role"] == "owner-ledger" and a.get("run") == "pilot")]
+                if not (a["role"] == "owner-ledger"
+                        and a.get("run") == "shakedown")]
         path = self._mutate_manifest("missing-run-role", mutate)
         self.assertNotEqual(support.run_verify(path).returncode, 0)
 
@@ -130,14 +131,78 @@ class VerifySyntheticManifestTests(unittest.TestCase):
         path = self._mutate_manifest("bad-budget", mutate)
         self.assertNotEqual(support.run_verify(path).returncode, 0)
 
+    def test_rejects_tampered_role_budget(self):
+        def mutate(manifest, root):
+            manifest["budgets"]["main_max_target_registrations"] = 600001
+        path = self._mutate_manifest("bad-role-budget", mutate)
+        self.assertNotEqual(support.run_verify(path).returncode, 0)
+
     def test_rejects_early_stop_without_explanation(self):
         def mutate(manifest, root):
             for run in manifest["runs"]:
-                if run["role"] == "pilot":
+                if run["role"] == "shakedown":
                     run["stop_reason"] = "control-failure"
         path = self._mutate_manifest("no-explanation", mutate)
-        # The pilot now stopped early with no failure-explanation artifact,
-        # and its stop-record still names the old stop reason: both reject.
+        # The shakedown now stopped early with no failure-explanation
+        # artifact, and its stop-record still names the old stop reason:
+        # both reject.
+        self.assertNotEqual(support.run_verify(path).returncode, 0)
+
+    def test_rejects_pilot_role_run(self):
+        # The pilot role belongs to the frozen original-run revision; a
+        # churn-manifest/2 manifest must not carry it.
+        def mutate(manifest, root):
+            for run in manifest["runs"]:
+                if run["role"] == "shakedown":
+                    run["role"] = "pilot"
+            for art in manifest["artifacts"]:
+                if art.get("run") == "shakedown":
+                    art["run"] = "pilot"
+        path = self._mutate_manifest("pilot-role", mutate)
+        self.assertNotEqual(support.run_verify(path).returncode, 0)
+
+    def test_rejects_missing_main_run_entry(self):
+        def mutate(manifest, root):
+            manifest["runs"] = [r for r in manifest["runs"]
+                                if r["role"] != "main"]
+        path = self._mutate_manifest("no-main", mutate)
+        self.assertNotEqual(support.run_verify(path).returncode, 0)
+
+    def test_rejects_duplicate_main_runs(self):
+        def mutate(manifest, root):
+            for run in manifest["runs"]:
+                if run["role"] == "shakedown":
+                    run["role"] = "main"
+            for art in manifest["artifacts"]:
+                if art.get("run") == "shakedown":
+                    art["run"] = "main"
+        path = self._mutate_manifest("two-mains", mutate)
+        self.assertNotEqual(support.run_verify(path).returncode, 0)
+
+    def test_rejects_shakedown_over_role_cap(self):
+        def mutate(manifest, root):
+            for art in manifest["artifacts"]:
+                if art.get("role") == "run-config" and \
+                        art.get("run") == "shakedown":
+                    fs_path = os.path.join(root, art["path"])
+                    with open(fs_path, "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                    cfg["max_target_registrations"] = 4097
+                    with open(fs_path, "w", encoding="utf-8") as f:
+                        json.dump(cfg, f, indent=2, sort_keys=True)
+                    # keep the manifest hash consistent so ONLY the role
+                    # cap check can reject this manifest
+                    art["bytes"] = os.path.getsize(fs_path)
+                    art["sha256"] = support.sha256_file(fs_path)
+        path = self._mutate_manifest("shakedown-over-cap", mutate)
+        self.assertNotEqual(support.run_verify(path).returncode, 0)
+
+    def test_rejects_missing_results_table_role(self):
+        def mutate(manifest, root):
+            manifest["artifacts"] = [
+                a for a in manifest["artifacts"]
+                if a["role"] != "results-table"]
+        path = self._mutate_manifest("no-table", mutate)
         self.assertNotEqual(support.run_verify(path).returncode, 0)
 
 

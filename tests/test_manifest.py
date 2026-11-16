@@ -8,7 +8,8 @@ import unittest
 import support
 from support import (MANIFEST_SCHEMA, ALLOCATION_BYTES, PROBE_SPEC,
                      REQUIRED_ACCESS_FLAGS, BUDGETS, REQUIRED_PROHIBITIONS,
-                     SAMPLE_PLAN, STOP_REASONS,
+                     SAMPLE_PLAN, STOP_REASONS, RUN_ROLES, PRIMARY_ROLE,
+                     AUXILIARY_ROLE, ROLE_REG_CAPS,
                      STOP_REASONS_REQUIRING_EXPLANATION,
                      REQUIRED_GLOBAL_ROLES, REQUIRED_RUN_ROLES)
 
@@ -130,12 +131,17 @@ class ManifestArtifactTests(unittest.TestCase):
     def test_runs_structure(self):
         runs = support.run_entries(self.manifest)
         roles = [r.get("role") for r in runs]
-        self.assertEqual(roles.count("pilot"), 1,
-                         "exactly one pilot run required, got %r"
+        self.assertEqual(roles.count(PRIMARY_ROLE), 1,
+                         "exactly one main (primary) run required, got %r"
                          % (roles,))
-        self.assertLessEqual(roles.count("main"), 1)
+        self.assertLessEqual(roles.count(AUXILIARY_ROLE), 1,
+                             "at most one shakedown (auxiliary) run, "
+                             "got %r" % (roles,))
+        self.assertNotIn("pilot", roles,
+                         "the pilot role belongs to the frozen "
+                         "original-run revision only")
         for run in runs:
-            self.assertIn(run.get("role"), ("pilot", "main"))
+            self.assertIn(run.get("role"), RUN_ROLES)
             self.assertIsInstance(run.get("label"), str)
             self.assertTrue(run["label"].strip())
             self.assertIn(run.get("stop_reason"), STOP_REASONS,
@@ -163,7 +169,7 @@ class ManifestArtifactTests(unittest.TestCase):
                                   int)
             self.assertIsInstance(stop_record.get("wall_seconds_at_stop"),
                                   (int, float))
-            # run-config caps must stay within the global budgets
+            # run-config caps must stay within the role budgets
             cfg_arts = support.artifacts_by_role(self.manifest, "run-config",
                                                  run=run["role"])
             self.assertEqual(len(cfg_arts), 1)
@@ -175,8 +181,10 @@ class ManifestArtifactTests(unittest.TestCase):
                 BUDGETS["max_wall_seconds"])
             self.assertLessEqual(
                 run_config.get("max_target_registrations",
-                               BUDGETS["max_target_registrations"]),
-                BUDGETS["max_target_registrations"])
+                               ROLE_REG_CAPS[run["role"]]),
+                ROLE_REG_CAPS[run["role"]],
+                "run %r declares a registration cap above its role budget"
+                % run["role"])
             # exactly one owner/requester ledger per run
             self.assertEqual(len(support.artifacts_by_role(
                 self.manifest, "owner-ledger", run=run["role"])), 1)
