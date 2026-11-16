@@ -6,3 +6,4 @@ run-manifest.json
 churn
 churn.aarch64
 .venv/
+config.local.toml

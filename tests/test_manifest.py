@@ -1,12 +1,12 @@
 """Acceptance tests for run-manifest.json (structure, pinned values,
 artifacts, runs).  See tests/support.py for the full contract."""
 
+import ipaddress
 import os
 import unittest
 
 import support
-from support import (MANIFEST_SCHEMA, OWNER_ENDPOINT, REQUESTER_ENDPOINT,
-                     REMOTE_DIRECTORY, ALLOCATION_BYTES, PROBE_SPEC,
+from support import (MANIFEST_SCHEMA, ALLOCATION_BYTES, PROBE_SPEC,
                      REQUIRED_ACCESS_FLAGS, BUDGETS, REQUIRED_PROHIBITIONS,
                      SAMPLE_PLAN, STOP_REASONS,
                      STOP_REASONS_REQUIRING_EXPLANATION,
@@ -25,11 +25,13 @@ class ManifestStructureTests(unittest.TestCase):
     def test_endpoints_and_remote_directory(self):
         experiment = self.manifest.get("experiment")
         self.assertIsInstance(experiment, dict)
-        self.assertEqual(experiment.get("owner_endpoint"), OWNER_ENDPOINT)
-        self.assertEqual(experiment.get("requester_endpoint"),
-                         REQUESTER_ENDPOINT)
-        self.assertEqual(experiment.get("remote_directory"),
-                         REMOTE_DIRECTORY)
+        owner = ipaddress.IPv4Address(experiment.get("owner_endpoint"))
+        requester = ipaddress.IPv4Address(experiment.get("requester_endpoint"))
+        self.assertNotEqual(owner, requester)
+        remote = experiment.get("remote_directory")
+        self.assertIsInstance(remote, str)
+        self.assertTrue(remote.startswith("/"))
+        self.assertNotIn("..", remote.split("/"))
 
     def test_config_fixed_allocation_and_probe(self):
         config = self.manifest.get("config")

@@ -3,7 +3,7 @@
 
 Usage: python3 verify.py [--strict] MANIFEST
 
-Exits 0 only when the manifest is structurally valid, its pinned
+Exits 0 only when the manifest is structurally valid, its
 experiment configuration matches the declared contract (endpoints, fixed
 allocation, probe shape, budgets, prohibitions, sample plan), every listed
 artifact exists with matching size and SHA-256, all required artifact
@@ -18,14 +18,15 @@ always runs.
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
+from pathlib import Path
+import re
 import sys
 
 MANIFEST_SCHEMA = "churn-manifest/1"
-OWNER_ENDPOINT = "192.168.122.112"
-REQUESTER_ENDPOINT = "192.168.122.111"
-REMOTE_DIRECTORY = "/tmp/rkey-lifecycle-churn-glm"
+REMOTE_PATH = re.compile(r"/[A-Za-z0-9_./-]+\Z")
 ALLOCATION_BYTES = 4096
 PROBE_SPEC = {"opcode": "RDMA_WRITE", "transport": "RC",
               "length": 64, "offset": 64, "nonzero": True}
@@ -85,14 +86,21 @@ def check_manifest(manifest, manifest_dir):
     if not isinstance(experiment, dict):
         v.add("missing 'experiment' object")
     else:
-        if experiment.get("owner_endpoint") != OWNER_ENDPOINT:
-            v.add("experiment.owner_endpoint must be %r" % OWNER_ENDPOINT)
-        if experiment.get("requester_endpoint") != REQUESTER_ENDPOINT:
-            v.add("experiment.requester_endpoint must be %r"
-                  % REQUESTER_ENDPOINT)
-        if experiment.get("remote_directory") != REMOTE_DIRECTORY:
-            v.add("experiment.remote_directory must be %r"
-                  % REMOTE_DIRECTORY)
+        for name in ("owner_endpoint", "requester_endpoint"):
+            value = experiment.get(name)
+            if not isinstance(value, str):
+                v.add("experiment.%s must be an IPv4 address" % name)
+                continue
+            try:
+                ipaddress.IPv4Address(value)
+            except (ipaddress.AddressValueError, TypeError):
+                v.add("experiment.%s must be an IPv4 address" % name)
+        if experiment.get("owner_endpoint") == experiment.get("requester_endpoint"):
+            v.add("experiment endpoints must differ")
+        remote = experiment.get("remote_directory")
+        if (not isinstance(remote, str) or not REMOTE_PATH.fullmatch(remote)
+                or ".." in Path(remote).parts):
+            v.add("experiment.remote_directory must be a safe absolute path")
 
     config = manifest.get("config")
     if not isinstance(config, dict):

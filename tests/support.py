@@ -40,9 +40,8 @@ Repository layout (all paths relative to the repository root):
 
 Manifest schema (``schema`` == "churn-manifest/1"):
 
-- ``experiment``: ``owner_endpoint`` "192.168.122.112",
-  ``requester_endpoint`` "192.168.122.111", ``remote_directory``
-  "/tmp/rkey-lifecycle-churn-glm".
+- ``experiment``: distinct IPv4 owner/requester endpoints and a safe
+  absolute remote directory. Synthetic fixtures use documentation addresses.
 - ``config``: ``allocation_bytes`` 4096; ``probe`` = nonzero 64-byte RC
   RDMA WRITE at offset 64; ``mr_access`` includes LOCAL_WRITE and
   REMOTE_WRITE; ``fixed_allocation``, ``allocation_alive_until_qps_destroyed``
@@ -152,11 +151,11 @@ for _p in (TESTS_DIR, REPO_ROOT):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-# --- pinned experiment constants (from the task's hard requirements) ------
+# --- synthetic fixture constants and pinned measurement rules --------------
 
-OWNER_ENDPOINT = "192.168.122.112"          # rdma-server
-REQUESTER_ENDPOINT = "192.168.122.111"      # rdma-client
-REMOTE_DIRECTORY = "/tmp/rkey-lifecycle-churn-glm"
+OWNER_ENDPOINT = "192.0.2.12"
+REQUESTER_ENDPOINT = "192.0.2.11"
+REMOTE_DIRECTORY = "/tmp/rxe-churn-test"
 
 MANIFEST_PATH = os.path.join(REPO_ROOT, "run-manifest.json")
 MANIFEST_SCHEMA = "churn-manifest/1"

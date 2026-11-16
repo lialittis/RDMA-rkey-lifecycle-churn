@@ -8,26 +8,32 @@ buffer after the fact, saves it per run host, filters RXE-related and
 warning lines, and records them as a posthoc section — explicitly labeled
 as not a before/after delta."""
 
+import argparse
 import json
 import os
 import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OWNER = "192.168.122.112"
-CLIENT = "192.168.122.111"
-SSH = ["ssh", "-F", "/dev/null", "-i",
-       "/home/tianchi/epochrdma/keys/epochrdma_vm", "-o", "BatchMode=yes",
-       "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=8"]
+sys.path.insert(0, REPO)
+from lab_config import ConfigError, load_config  # noqa: E402
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", help="TOML lab config (default: config.local.toml)")
+    args = parser.parse_args()
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        parser.error(str(exc))
     results = os.path.join(REPO, "results")
     run_dirs = [d for d in sorted(os.listdir(results))
                 if (d.startswith("pilot-") or d.startswith("main-"))
                 and os.path.isdir(os.path.join(results, d))]
-    for host, name in ((OWNER, "owner"), (CLIENT, "requester")):
-        r = subprocess.run(SSH + ["ubuntu@" + host, "sudo -n dmesg"],
+    for host, name in ((config.owner_ip, "owner"),
+                       (config.requester_ip, "requester")):
+        r = subprocess.run(config.ssh_args() + [config.target(host), "sudo -n dmesg"],
                            capture_output=True, timeout=60)
         text = r.stdout.decode(errors="replace")
         lines = text.splitlines()

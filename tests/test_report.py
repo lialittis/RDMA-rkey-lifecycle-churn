@@ -6,7 +6,6 @@ import os
 import unittest
 
 import support
-from support import REMOTE_DIRECTORY
 
 
 class ReportTests(unittest.TestCase):
@@ -89,9 +88,7 @@ class ProvenanceArtifactTests(unittest.TestCase):
             support.artifact_fs_path(support.REPO_ROOT, arts[0]))
 
     def test_environment_artifacts_record_versions(self):
-        for role, host in (("environment-owner", support.OWNER_ENDPOINT),
-                           ("environment-requester",
-                            support.REQUESTER_ENDPOINT)):
+        for role in ("environment-owner", "environment-requester"):
             env = self._load_first(role)
             kernel = env.get("kernel_version")
             self.assertIsInstance(kernel, str)
@@ -124,9 +121,10 @@ class ProvenanceArtifactTests(unittest.TestCase):
             self.assertIsInstance(entry["host"], str)
             self.assertIsInstance(entry["command"], str)
             joined += entry["command"]
-        self.assertIn(REMOTE_DIRECTORY, joined,
+        remote = self.manifest["experiment"]["remote_directory"]
+        self.assertIn(remote, joined,
                       "remote commands must operate under the dedicated "
-                      "%s directory" % REMOTE_DIRECTORY)
+                      "%s directory" % remote)
 
     def test_negative_checks_recorded_and_passing(self):
         checks = self._load_first("negative-checks")

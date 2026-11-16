@@ -3,12 +3,13 @@
 
 Runs one owner (rdma-server) and one requester (rdma-client) process over
 SSH, fetches ledgers/logs/diagnostics into results/<run>/, and writes
-run-config.json, stop-record.json and execution.json.  All remote files
-live under /tmp/rkey-lifecycle-churn-glm only."""
+run-config.json, stop-record.json and execution.json. Remote paths and
+endpoints come from the lab config."""
 
 import argparse
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -18,22 +19,14 @@ import datetime
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 import ledger  # noqa: E402
+from lab_config import ConfigError, load_config  # noqa: E402
 
-REMOTE = "/tmp/rkey-lifecycle-churn-glm"
-OWNER = "192.168.122.112"     # rdma-server, runs the owner
-CLIENT = "192.168.122.111"    # rdma-client, runs the requester
-SSH = ["ssh", "-F", "/dev/null", "-i", "/home/tianchi/epochrdma/keys/epochrdma_vm",
-       "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
-       "-o", "ConnectTimeout=8"]
-SCP = ["scp", "-F", "/dev/null", "-i", "/home/tianchi/epochrdma/keys/epochrdma_vm",
-       "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"]
+REMOTE = OWNER = CLIENT = SSH_USER = None
+SSH = SCP = ENV_CMD = None
 PORT = 7471
 GLOBAL_MAX_REGS = 1048576
 GLOBAL_MAX_SECONDS = 900
 
-ENV_CMD = ("uname -a; cat /proc/version; ibv_devices; "
-           "cat /sys/module/rdma_rxe/version 2>/dev/null; "
-           "ibv_devinfo -d rxe0 2>/dev/null | head -20")
 DIAG_CMD = "dmesg | tail -120"
 
 
@@ -42,12 +35,12 @@ def utc():
 
 
 def ssh_run(ip, command, timeout=120, capture=True):
-    return subprocess.run(SSH + ["ubuntu@" + ip, command], capture_output=capture,
+    return subprocess.run(SSH + [SSH_USER + "@" + ip, command], capture_output=capture,
                           timeout=timeout)
 
 
 def fetch(ip, remote_path, local_path):
-    r = subprocess.run(SCP + ["ubuntu@%s:%s" % (ip, remote_path), local_path],
+    r = subprocess.run(SCP + ["%s@%s:%s" % (SSH_USER, ip, remote_path), local_path],
                        capture_output=True, timeout=180)
     if r.returncode:
         print("scp failed %s:%s: %s" % (ip, remote_path,
@@ -56,7 +49,9 @@ def fetch(ip, remote_path, local_path):
 
 
 def main():
+    global REMOTE, OWNER, CLIENT, SSH_USER, SSH, SCP, ENV_CMD
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", help="TOML lab config (default: config.local.toml)")
     parser.add_argument("--role", required=True, choices=["pilot", "main", "shakedown"])
     parser.add_argument("--max-regs", type=int, required=True)
     parser.add_argument("--deadline", type=int, required=True,
@@ -65,11 +60,27 @@ def main():
     parser.add_argument("--selftest", action="store_true",
                         help="enable the gen-1 machinery selftest (pilot only)")
     args = parser.parse_args()
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        parser.error(str(exc))
+    REMOTE = config.remote_directory
+    OWNER = config.owner_ip
+    CLIENT = config.requester_ip
+    SSH_USER = config.ssh_user
+    SSH = config.ssh_args()
+    SCP = config.ssh_args("scp")
+    ENV_CMD = ("uname -a; cat /proc/version; ibv_devices; "
+               "cat /sys/module/rdma_rxe/version 2>/dev/null; "
+               "ibv_devinfo -d rxe0 2>/dev/null | head -20")
 
-    if args.max_regs > GLOBAL_MAX_REGS or args.deadline > GLOBAL_MAX_SECONDS:
-        raise SystemExit("caps exceed the hard global budget")
+    if not (1 <= args.max_regs <= GLOBAL_MAX_REGS
+            and 1 <= args.deadline <= GLOBAL_MAX_SECONDS):
+        parser.error("max-regs and deadline must be positive and within the caps")
 
     label = args.label or args.role
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", label):
+        parser.error("label must contain only letters, digits, dot, dash or underscore")
     out_dir = os.path.join(REPO, "results", "%s-%s" % (args.role, utc()))
     os.makedirs(out_dir, exist_ok=True)
     port = PORT + (0 if args.role != "shakedown" else 1)
@@ -114,7 +125,7 @@ def main():
                          % r.stderr.decode(errors="replace"))
     time.sleep(2)
     started = time.time()
-    rq = subprocess.run(SSH + ["ubuntu@" + CLIENT, req_cmd], capture_output=True,
+    rq = subprocess.run(SSH + [SSH_USER + "@" + CLIENT, req_cmd], capture_output=True,
                         timeout=args.deadline + 240)
     execution["requester_returncode"] = rq.returncode
     # wait for the owner rc file (bounded)
@@ -171,7 +182,10 @@ def main():
             json.dump(diag, f, indent=2)
 
     # run config + stop record from the owner ledger
-    run_config = {"max_wall_seconds": args.deadline,
+    run_config = {"owner_endpoint": OWNER,
+                  "requester_endpoint": CLIENT,
+                  "remote_directory": REMOTE,
+                  "max_wall_seconds": args.deadline,
                   "max_target_registrations": args.max_regs,
                   "calibration_prefix_registrations": min(4096, args.max_regs),
                   "port": port, "selftest": bool(args.selftest),

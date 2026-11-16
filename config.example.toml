@@ -1,0 +1,7 @@
+[lab]
+owner_ip = "192.0.2.12"
+requester_ip = "192.0.2.11"
+ssh_user = "ubuntu"
+ssh_identity_file = "~/.ssh/id_ed25519"
+ssh_config_file = "/dev/null"
+remote_directory = "/tmp/rxe-churn"

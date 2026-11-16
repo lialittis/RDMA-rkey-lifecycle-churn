@@ -68,6 +68,21 @@ class VerifySyntheticManifestTests(unittest.TestCase):
                          "verify rejected a complete synthetic manifest:\n"
                          "%s" % result.stdout.decode())
 
+    def test_accepts_different_valid_endpoint_config(self):
+        def mutate(manifest, root):
+            manifest["experiment"].update({
+                "owner_endpoint": "198.51.100.12",
+                "requester_endpoint": "198.51.100.11",
+                "remote_directory": "/tmp/another-rxe-run"})
+        path = self._mutate_manifest("other-endpoints", mutate)
+        self.assertEqual(support.run_verify(path, strict=True).returncode, 0)
+
+    def test_rejects_invalid_endpoint_config(self):
+        def mutate(manifest, root):
+            manifest["experiment"]["owner_endpoint"] = "not-an-ip"
+        path = self._mutate_manifest("bad-endpoint", mutate)
+        self.assertNotEqual(support.run_verify(path, strict=True).returncode, 0)
+
     def test_rejects_wrong_artifact_hash(self):
         def mutate(manifest, root):
             manifest["artifacts"][0]["sha256"] = \

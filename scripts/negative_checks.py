@@ -69,9 +69,9 @@ def main():
             manifest = {
                 "schema": "churn-manifest/1",
                 "experiment": {
-                    "owner_endpoint": "192.168.122.112",
-                    "requester_endpoint": "192.168.122.111",
-                    "remote_directory": "/tmp/rkey-lifecycle-churn-glm"},
+                    "owner_endpoint": "192.0.2.12",
+                    "requester_endpoint": "192.0.2.11",
+                    "remote_directory": "/tmp/rxe-churn-test"},
                 "config": {"allocation_bytes": 4096,
                            "probe": {"opcode": "RDMA_WRITE", "transport": "RC",
                                      "length": 64, "offset": 64,

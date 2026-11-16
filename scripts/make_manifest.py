@@ -7,16 +7,15 @@ diagnostics/configs/stops, analysis, report, negative checks) with sizes
 and SHA-256 hashes.  Run after results/report.md and results/analysis.json
 are final; then `python3 verify.py --strict run-manifest.json` must pass."""
 
+import argparse
 import hashlib
 import json
 import os
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-OWNER = "192.168.122.112"
-REQUESTER = "192.168.122.111"
-REMOTE = "/tmp/rkey-lifecycle-churn-glm"
+sys.path.insert(0, REPO)
+from lab_config import ConfigError, load_config  # noqa: E402
 
 
 def sha256_file(path):
@@ -41,11 +40,26 @@ def art(role, path, run=None):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", help="TOML lab config (default: config.local.toml)")
+    args = parser.parse_args()
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        parser.error(str(exc))
     results = os.path.join(REPO, "results")
+    with open(os.path.join(results, "build.json"), encoding="utf-8") as stream:
+        build = json.load(stream)
+    if (build.get("compiler_host") != config.requester_ip
+            or set(build.get("runtime_hosts", []))
+            != {config.owner_ip, config.requester_ip}
+            or build.get("remote_directory") != config.remote_directory):
+        raise SystemExit("build.json does not match the selected lab config")
     runs = []
     artifacts = []
 
     artifacts.append(art("harness-source", "src/churn.c"))
+    artifacts.append(art("harness-source", "lab_config.py"))
     artifacts.append(art("harness-source", "scripts/deploy.py"))
     artifacts.append(art("harness-source", "scripts/run.py"))
     artifacts.append(art("harness-source", "scripts/negative_checks.py"))
@@ -78,6 +92,14 @@ def main():
 
     for role, dirname in run_dirs:
         run_dir = os.path.join(results, dirname)
+        with open(os.path.join(run_dir, "run-config.json"), encoding="utf-8") as stream:
+            run_config = json.load(stream)
+        for key, expected in (("owner_endpoint", config.owner_ip),
+                              ("requester_endpoint", config.requester_ip),
+                              ("remote_directory", config.remote_directory)):
+            if run_config.get(key) != expected:
+                raise SystemExit("%s/run-config.json %s does not match lab config"
+                                 % (dirname, key))
         stop = json.load(open(os.path.join(run_dir, "stop-record.json")))
         runs.append({"role": role, "label": dirname,
                      "stop_reason": stop["stop_reason"]})
@@ -113,9 +135,9 @@ def main():
         "schema": "churn-manifest/1",
         "experiment": {
             "name": "bounded-rxe-registration-churn",
-            "owner_endpoint": OWNER,
-            "requester_endpoint": REQUESTER,
-            "remote_directory": REMOTE,
+            "owner_endpoint": config.owner_ip,
+            "requester_endpoint": config.requester_ip,
+            "remote_directory": config.remote_directory,
         },
         "config": {
             "allocation_bytes": 4096,
